@@ -1,9 +1,9 @@
 import { atom, read, update } from 'claude-code'
-import type { EngineInterface, Register, RenderChildren } from 'claude-code'
+import type { EngineInterface, Register, RenderChildren, ThemeKey } from 'claude-code'
 
 import type { AgentRun, AgentsPanel, CacheFacts, Fold, ViewMode, Window } from '../types'
 import {
-  BG, EMPTY, HUE, INK, MUTED, ORANGE, ROBO_SIZE, TEXT, TTL_MIN, TTL_MS, WORD, YELLOW,
+  EMPTY, HUE, INK, ORANGE, VIOLET, ROBO_SIZE, T_EMPTY, T_HUE, T_MUTED, T_TEXT, TEXT, TTL_MIN, TTL_MS, WORD, YELLOW,
   cardSvg, chipSvg, costOf, familyOf, fmtIdle, mineModel, roboSvg, svgDoc, usd,
 } from './cache-art'
 import type { CacheView } from './cache-art'
@@ -61,9 +61,49 @@ const crewViewOf = (all: readonly AgentRun[]): CrewView => {
   }
 }
 
-const NAMES: Record<string, string> = { seven_day: '7D', five_hour: '5H', spend_limit: 'SPEND' }
-const ORDER: Record<string, number> = { seven_day: 0, five_hour: 1 }
-const COLORS: Record<string, string> = { seven_day: ORANGE, five_hour: YELLOW }
+// Workflows come from the progress-board mod when it is installed, whose state any
+// plugin may read: the band adds each running workflow's agents to the wave.
+type BoardWorkflow = { name: string; status: string; startedAt?: number; agents: { status: string }[]; agentCount?: number }
+const boardWorkflows = { plugin: 'progress-board', key: 'workflows' } as const
+const WORKFLOW_SUBAGENT = 'workflow-subagent'
+
+const crewWithWorkflows = (all: readonly AgentRun[], flows: readonly BoardWorkflow[]): CrewView => {
+  const live = flows.filter(w => w.status === 'running')
+  if (live.length === 0) return crewViewOf(all)
+  // progress-board already counts the live workflows' agents, so the band's own runs of
+  // them are left out; runs from workflows that finished earlier still count.
+  const since = Math.min(...live.map(w => w.startedAt ?? 0))
+  const c = crewViewOf(all.filter(a => a.type !== WORKFLOW_SUBAGENT || a.startedAt < since))
+  const inner = live.flatMap(w => w.agents)
+  const running = inner.filter(a => a.status === 'running').length
+  // agentCount also counts the agents a workflow has not spawned yet.
+  const planned = live.reduce((n, w) => n + Math.max(w.agents.length, w.agentCount ?? 0), 0)
+  return {
+    title: live.length === 1 && c.running === 0 ? live[0]!.name || 'Workflow' : 'Agents · workflows',
+    done: c.done + inner.length - running,
+    running: c.running + running,
+    total: c.total + planned,
+  }
+}
+
+const readBoardWorkflows = async ($: EngineInterface): Promise<BoardWorkflow[]> => {
+  try {
+    const { value } = await ($.state.get as (ref: unknown) => Promise<{ value?: unknown }>)(boardWorkflows)
+    return Array.isArray(value) ? (value as BoardWorkflow[]) : []
+  } catch {
+    return []
+  }
+}
+
+const NAMES: Record<string, string> = { seven_day: '7D', five_hour: '5H', spend_limit: 'SPEND', context: 'CTX' }
+const ORDER: Record<string, number> = { seven_day: 0, five_hour: 1, context: 2 }
+const COLORS: Record<string, string> = { seven_day: ORANGE, five_hour: YELLOW, context: VIOLET }
+/** The same as theme keys, for text: raw yellow is unreadable on a light background. */
+const T_COLORS: Record<string, ThemeKey> = { seven_day: 'claude', five_hour: 'warning', context: 'permission' }
+
+/** The context window drawn as one more gauge: what is left before it fills up. */
+const contextWindow = (c: CacheFacts | null): Window | null =>
+  c && c.tokens > 0 && c.window > 0 ? { kind: 'context', percentUsed: Math.min(100, (c.tokens / c.window) * 100) } : null
 
 const clean = (list: readonly Window[]): Window[] =>
   list
@@ -71,8 +111,8 @@ const clean = (list: readonly Window[]): Window[] =>
     .sort((a, b) => (ORDER[a.kind] ?? 9) - (ORDER[b.kind] ?? 9))
 
 // One row at every width: when room runs out the band drops pieces in a fixed
-// order instead of stacking (Robo, the cold idle time, the reset times, the SVG
-// chip, the bars, the cache tail). Never dropped: each window's percent, the
+// order instead of stacking (Robo, the cold idle time, the reset times, the
+// bars, the cache tail). Never dropped: each window's percent, the
 // WARM / COLD word, the fold button.
 /** CSS px on desktop, measured on captures: text ~7.5 a character. */
 const DRAWN_PX = { char: 7.5, gap: 17, pad: 20, button: 34, wordButton: 64, sep: 16, swap: 34, wordSwap: 84 }
@@ -90,15 +130,15 @@ const BAR_H = 10
 
 // The first tier is the roomy one: "left" after each figure, longer bars and a
 // Show / Hide button in words. The rest are the compact steps down.
-type Tier = { robo: boolean; idle: boolean; resets: boolean; svgChip: boolean; bar: number; tail: boolean; words?: boolean }
+type Tier = { robo: boolean; idle: boolean; resets: boolean; bar: number; tail: boolean; words?: boolean }
 const TIERS: Tier[] = [
-  { robo: true, idle: true, resets: true, svgChip: true, bar: 130, tail: true, words: true },
-  { robo: true, idle: true, resets: true, svgChip: true, bar: 112, tail: true },
-  { robo: false, idle: false, resets: true, svgChip: true, bar: 112, tail: true },
-  { robo: false, idle: false, resets: false, svgChip: true, bar: 112, tail: true },
-  { robo: false, idle: false, resets: false, svgChip: false, bar: 52, tail: true },
-  { robo: false, idle: false, resets: false, svgChip: false, bar: 0, tail: true },
-  { robo: false, idle: false, resets: false, svgChip: false, bar: 0, tail: false },
+  { robo: true, idle: true, resets: true, bar: 130, tail: true, words: true },
+  { robo: true, idle: true, resets: true, bar: 112, tail: true },
+  { robo: false, idle: false, resets: true, bar: 112, tail: true },
+  { robo: false, idle: false, resets: false, bar: 112, tail: true },
+  { robo: false, idle: false, resets: false, bar: 52, tail: true },
+  { robo: false, idle: false, resets: false, bar: 0, tail: true },
+  { robo: false, idle: false, resets: false, bar: 0, tail: false },
 ]
 
 const leftOf = (w: Window): number => Math.max(0, Math.round((100 - w.percentUsed) * 10) / 10)
@@ -138,7 +178,7 @@ const tierOf = (columns: number, list: readonly Window[], view: CacheView | null
     }, 0)
     const cache = !view ? 0
       : (drawn && t.robo ? ROBO_SIZE + 6 : 0) +
-        (drawn && t.svgChip ? chipSvg(view.mode).w : text(` ${WORD[view.mode]} `)) +
+        (drawn ? chipSvg(view.mode).w : text(` ${WORD[view.mode]} `)) +
         text(tailOf(view, t)) + m.gap
     const seps = (list.length + (view ? 1 : 0) - 1) * m.sep
     const need = m.pad + wins + cache + seps + (view ? (t.words ? m.wordButton : m.button) : 0) + (swap ? (t.words ? m.wordSwap : m.swap) : 0)
@@ -505,9 +545,11 @@ export const register: Register = (on, options) => {
     // Svg draws on desktop, mobile and VS Code; the terminal gets the text form.
     // Ask the surface, not the table: the terminal's table still lists Svg.
     const Svg = e.surface !== 'terminal' && 'Svg' in ui ? ui.Svg : null
-    const list = await read($, windows)
+    const facts = await read($, cache)
+    const ctxWin = contextWindow(facts)
+    const list = ctxWin ? clean([...(await read($, windows)), ctxWin]) : await read($, windows)
     const now = await $.clock.now()
-    const view = viewOf(await read($, cache), now)
+    const view = viewOf(facts, now)
     const columns = e.props.bodyColumns ?? e.viewport?.columns ?? 100
 
     // The ⇄ button: desktop only, like the fold button, so the terminal always shows usage.
@@ -524,14 +566,14 @@ export const register: Register = (on, options) => {
     )
 
     if (Svg && shown === 'agents') {
-      const c = crewViewOf(await read($, agents))
+      const c = crewWithWorkflows(await read($, agents), await readBoardWorkflows($))
       const count = `×${c.total}`
       const room = columns * DRAWN_COLUMN_PX
       const words = room >= 520
       const others = DRAWN_PX.pad + (words ? DRAWN_PX.wordSwap : DRAWN_PX.swap) + count.length * DRAWN_PX.char + 2 * DRAWN_PX.gap
       const W = Math.max(180, Math.min(1000, Math.floor((room - others) / SAFETY)))
       return (
-        <Box flexDirection="row" backgroundColor={BG} paddingX={1} alignItems="center">
+        <Box flexDirection="row" paddingX={1} alignItems="center">
           <Box key="crew-row" flexShrink={0}>
             <Svg source={crewRowSvg(c, W)} alt={`${c.title}: ${crewLabel(c)}, ${crewPercent(c)}`} width={W} height={ROW_H} />
           </Box>
@@ -546,8 +588,8 @@ export const register: Register = (on, options) => {
 
     if (list.length === 0 && !view) {
       return (
-        <Box backgroundColor={BG} paddingX={1}>
-          <Text color={MUTED}>USAGE · waiting for the first reply</Text>
+        <Box paddingX={1}>
+          <Text color={T_MUTED}>USAGE · waiting for the first reply</Text>
         </Box>
       )
     }
@@ -572,17 +614,17 @@ export const register: Register = (on, options) => {
           bar = [<Svg key="bar" source={barSvg(left, col, barW)} alt={`${pct} left`} width={barW} height={BAR_H} />]
         } else {
           const d = dots(left, TERM_CELLS)
-          bar = [<Text key="on" color={col}>{d.on}</Text>, <Text key="off" color={EMPTY}>{d.off}</Text>]
+          bar = [<Text key="on" color={T_COLORS[w.kind] ?? T_TEXT}>{d.on}</Text>, <Text key="off" color={T_EMPTY}>{d.off}</Text>]
         }
       }
       return (
         <Box key={`w-${i}`} flexDirection="row" flexShrink={0} marginRight={2} alignItems="center">
-          <Text color={MUTED} bold>{`${NAMES[w.kind] ?? w.kind} `}</Text>
+          <Text color={T_MUTED} bold>{`${NAMES[w.kind] ?? w.kind} `}</Text>
           {bar}
           {left < LOW_AT
             ? [<Text key="sp"> </Text>, <Text key="pct" backgroundColor={HUE.warm} color={TEXT} bold>{` ${pctText} `}</Text>]
-            : <Text color={col} bold>{` ${pctText}`}</Text>}
-          {reset ? <Text color={MUTED}>{` ${reset}`}</Text> : null}
+            : <Text color={T_COLORS[w.kind] ?? T_TEXT} bold>{` ${pctText}`}</Text>}
+          {reset ? <Text color={T_MUTED}>{` ${reset}`}</Text> : null}
         </Box>
       )
     }
@@ -595,7 +637,7 @@ export const register: Register = (on, options) => {
         ? [
             <Box key={`sp-a-${k}`} flexGrow={1} />,
             <Box key={`sep-${k}`} flexShrink={0} marginRight={1}>
-              <Text color={MUTED}>•</Text>
+              <Text color={T_MUTED}>•</Text>
             </Box>,
             <Box key={`sp-b-${k}`} flexGrow={1} />,
           ]
@@ -607,12 +649,12 @@ export const register: Register = (on, options) => {
 
     const usage = list.length > 0
       ? list.map(win)
-      : [<Box key="wait" flexShrink={0} marginRight={2}><Text color={MUTED}>waiting for the first reply</Text></Box>]
+      : [<Box key="wait" flexShrink={0} marginRight={2}><Text color={T_MUTED}>waiting for the first reply</Text></Box>]
 
     // Before the first reply there is no cache to show, and nothing to fold.
     if (!view) {
       return (
-        <Box flexDirection="row" backgroundColor={BG} paddingX={1} alignItems="center">
+        <Box flexDirection="row" paddingX={1} alignItems="center">
           {spread(usage, hasSwap ? swapButton('agents', tier.words === true, false) : undefined)}
         </Box>
       )
@@ -627,7 +669,8 @@ export const register: Register = (on, options) => {
     const toggle = () =>
       update($, fold, f => ({ mode, open: !(f && f.mode === mode ? f.open : mode === 'cold') }))
 
-    const chip = Svg && tier.svgChip
+    // On desktop the chip is always the rounded drawing: a text background can't be rounded.
+    const chip = Svg
       ? (() => {
           const c = chipSvg(mode)
           return <Svg key="chip" source={c.source} alt={WORD[mode]} width={c.w} height={c.h} />
@@ -639,10 +682,10 @@ export const register: Register = (on, options) => {
     const tailEl = !tail ? null
       : cold && price
         ? [
-            tail.trim() !== price ? <Text key="idle" color={hue} bold>{tail.slice(0, tail.length - price.length)}</Text> : <Text key="sp"> </Text>,
-            <Text key="price" color={TEXT} bold>{price}</Text>,
+            tail.trim() !== price ? <Text key="idle" color={T_HUE[mode]} bold>{tail.slice(0, tail.length - price.length)}</Text> : <Text key="sp"> </Text>,
+            <Text key="price" color={T_TEXT} bold>{price}</Text>,
           ]
-        : <Text key="tail" color={hue} bold>{tail}</Text>
+        : <Text key="tail" color={T_HUE[mode]} bold>{tail}</Text>
 
     const cacheEl = (
       <Box key="cache" flexDirection="row" flexShrink={0} marginRight={2} alignItems="center">
@@ -684,7 +727,7 @@ export const register: Register = (on, options) => {
     }
 
     return (
-      <Box flexDirection="column" backgroundColor={BG}>
+      <Box flexDirection="column">
         {row}
         {card}
       </Box>

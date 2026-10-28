@@ -7,6 +7,7 @@
 A free mod for Claude Code. It adds a slim band above your prompt that shows:
 
 - **How much usage you have left** in your 7-day and 5-hour windows, and when each one resets.
+- **How much of the context window is left** in the current chat.
 - **Whether your prompt cache is warm or cold**, and what your next message will cost.
 
 It installs once and is there in every session after that. No commands to learn.
@@ -58,9 +59,11 @@ In a Claude Code terminal session, type:
 ### Usage left
 
 - **7D** (orange) is your 7-day window. **5H** (yellow) is your 5-hour window.
+- **CTX** (violet) is the context window of the current chat: how much room is left before it fills up. It appears after your first reply.
 - Each bar shows what is **left**, not what is used: ten steps, one per 10%, with the percent beside it.
 - Next to it is when the window resets, for example `3d9h`.
 - If a window drops under 15%, its percent turns into a red badge.
+- The band has no background of its own: it follows the app, light or dark.
 
 ### The prompt cache
 
@@ -90,6 +93,8 @@ Off by default. Turn it on with the `agentsView` option in `/config` (Plugins �
 A **⇄ Agents** button then sits just before the fold button. It swaps the whole row for a progress bar of the subagents you've launched: how many of the current wave are done, with a crab that walks while any of them is still working. **⇄ Usage** brings the usage row back, and the band remembers your choice for the next session.
 
 In that view, **×N** opens a live panel beside the chat (so does `/agents-info`). Each subagent gets a row: its model, how full its context is, tokens, an estimated cost and how long it has run. Finished ones fold into their own section, and **Collapse** shrinks the panel to a strip of crabs. The panel only opens when you ask for it.
+
+If the [progress-board](https://github.com/ewxgwy1987/claude-code-progress-board) mod is installed, the agents of its running workflows are counted in the bar too.
 
 The bar and panel are adapted from [savvy-progress](https://github.com/johnnyvizz/claude-kit/tree/main/plugins/savvy-progress) by johnnyvizz (MIT). Only the drawing and the subagent tracking come over. Its plan-reporting tools need the savvy-flow skill, so they're left out.
 
